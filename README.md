@@ -1,6 +1,6 @@
 # VisionStory Skills
 
-Agent Skills for the [VisionStory API](https://openapi.visionstory.ai/docs) — generate AI talking-avatar
+Agent Skills for the [VisionStory API](https://developers.visionstory.ai) — generate AI talking-avatar
 videos, create avatars, clone voices, and manage video tasks from any agent that
 supports the [Agent Skills](https://github.com/anthropics/skills) format.
 
@@ -35,7 +35,8 @@ command line or pasted into chat:
 export VISIONSTORY_API_KEY="sk-vs-..."
 ```
 
-Get a key and read the full API reference at <https://openapi.visionstory.ai/docs>.
+Create or manage a key in [API Keys](https://developers.visionstory.ai/api-keys).
+Read the [API reference](https://developers.visionstory.ai/reference) for endpoint details.
 
 ## What's inside a skill
 
