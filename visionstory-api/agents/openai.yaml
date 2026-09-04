@@ -1,4 +1,4 @@
 interface:
-  display_name: "VisionStory Video API"
-  short_description: "Create AI avatar videos with VisionStory API"
+  display_name: "VisionStory API"
+  short_description: "Create videos and speech; extract structured media data"
   default_prompt: "Use $visionstory-api to create an AI avatar video from my image and script."

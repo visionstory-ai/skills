@@ -1,11 +1,11 @@
 ---
 name: visionstory-api
-description: Create and manage AI avatar videos through the VisionStory OpenAPI. Use when a user asks to generate a talking-avatar video from text or audio, create an avatar from an image, clone or select a voice, check video status, list generated videos, or work with VisionStory API resources.
+description: Create and manage talking-avatar videos, voices, speech, audio transcripts, and structured media extraction through the VisionStory OpenAPI. Use for avatar video generation, voice discovery or cloning, text-to-speech, transcription, alignment, media understanding, task status, downloads, and related VisionStory API resources.
 ---
 
-# VisionStory Video API
+# VisionStory API
 
-Use VisionStory's REST API to create talking-avatar videos and manage the related avatars, voices, and video tasks.
+Use VisionStory's REST API to create talking-avatar videos, select voices by locale, synthesize speech, and produce timestamped transcripts.
 
 ## Configuration
 
@@ -15,6 +15,8 @@ Use VisionStory's REST API to create talking-avatar videos and manage the relate
 - Send and receive JSON unless an endpoint description says otherwise.
 - Never print, log, commit, or expose the API key.
 - If the environment variable is missing, ask the user to configure it locally. Do not ask them to paste the key into chat.
+- When the VisionStory CLI is installed, use `visionstory login` for interactive CLI authentication instead of
+  constructing a shell prompt or editing a shell profile. Use `visionstory logout` to remove that saved CLI key.
 
 Use this shell setup for API calls:
 
@@ -23,9 +25,16 @@ export VISIONSTORY_API_KEY="sk-vs-..."
 export VISIONSTORY_API_BASE="https://openapi.visionstory.ai"
 ```
 
+The SDK, MCP server, and bundled helper continue to read `VISIONSTORY_API_KEY` from the environment. A CLI login is
+local to the CLI and must not be presented as configuring those other channels.
+
 ## Preferred execution
 
-Use `scripts/visionstory_api.py` when it is present. It has no third-party Python dependencies and provides consistent
+When the `visionstory` CLI is available and authentication was configured with `visionstory login`, prefer CLI commands
+so the saved credential is used. Inspect available commands with `visionstory --help`, and discover current resources
+with `visionstory models`, `visionstory avatars`, `visionstory voices`, and `visionstory credits` before generation.
+
+Otherwise, use `scripts/visionstory_api.py` when it is present. It has no third-party Python dependencies and provides consistent
 authentication, base64 encoding, polling, timeouts, error handling, and downloads. The script imports the shared
 client layer from `scripts/visionstory_client.py`, which ships in the same package; keep the two files together.
 
@@ -40,7 +49,7 @@ Discover resources:
 ```bash
 python3 scripts/visionstory_api.py models
 python3 scripts/visionstory_api.py avatars
-python3 scripts/visionstory_api.py voices
+python3 scripts/visionstory_api.py voices --locale en-GB --limit 20
 python3 scripts/visionstory_api.py credits
 ```
 
@@ -60,6 +69,14 @@ python3 scripts/visionstory_api.py create-video \
   --output result.mp4
 ```
 
+Create speech, transcribe audio, or align an exact script:
+
+```bash
+python3 scripts/visionstory_api.py tts --text "Hello" --voice-id VOICE_ID --locale en-GB --output speech.mp3
+python3 scripts/visionstory_api.py transcribe --audio-file speech.mp3 --srt --output speech.srt
+python3 scripts/visionstory_api.py align --audio-file speech.mp3 --text "Hello"
+```
+
 If only `SKILL.md` was installed and the script is unavailable, follow the HTTP workflow below.
 
 ## Workflow
@@ -72,6 +89,7 @@ If only `SKILL.md` was installed and the script is unavailable, follow the HTTP 
    - `GET /api/v1/models`
    - `GET /api/v1/avatars`
    - `GET /api/v1/voices`
+   Filter voices with a BCP 47 `locale`: `en` matches all English variants, while `en-GB`, `zh-TW`, or `zh-HK` selects one region. Reuse a returned voice's `locale` with `POST /api/v1/tts` when pronunciation should stay regional.
 3. If the user supplied an image rather than an `avatar_id`, create an avatar with `POST /api/v1/avatar`.
 4. Create the video with `POST /api/v1/video`.
 5. Poll `GET /api/v1/video?video_id=...` every 5 seconds until the status is `created` or `failed`. Stop after 10 minutes unless the user asks to keep waiting.
@@ -79,7 +97,7 @@ If only `SKILL.md` was installed and the script is unavailable, follow the HTTP 
 
 ## Create a video
 
-Prefer `vs_character_v4` unless the user requests another model. Confirm that the selected model supports the requested resolution by checking `GET /api/v1/models`.
+Prefer `vs_character_v4` unless the user requests another model. Confirm that the selected model supports the requested resolution by checking `GET /api/v1/models`. Offer only the documented `720p`, `1080p`, or `2k` values. The API keeps legacy raw HTTP requests that send `480p` working by rendering and billing them as `720p`, but `480p` is not a current model capability and must not be suggested for new requests.
 
 For a text script:
 
@@ -172,14 +190,27 @@ Use HTTP error handling and a bounded timeout. Videos are retained for 7 days, s
 - Delete a video: `DELETE /api/v1/video?video_id=...`
 - Clone a voice: `POST /api/v1/voice`
 - Delete a cloned voice: `DELETE /api/v1/voice?voice_id=...`
+- Create MP3 speech: `POST /api/v1/tts` (`text`, `voice_id`, optional `locale` and `speech_rate`: `slow`, `normal`, or `fast`). Omitted/null rate uses normal speed. Read actual duration from `X-Audio-Duration-Sec`; billing is unchanged. The helper accepts `tts --speech-rate slow`.
+- Extract structured media data: `POST /api/v1/media/understand` with required `prompt` (1–5000 characters), `inputs` (1–8 MediaRef objects), and an object-root JSON `schema`. Each input uses exactly one `url`, `asset_id`, or `inline_data`. This synchronous operation can take 180 seconds. It returns `data.output`, `data.usage` (input/output token counts), and `data.cost_credit`. Successful calls are billed from token usage, rounded up to at least 1 credit; moderation refusal is `37100`. There is no public model selector or free-text mode. Do not blindly retry a timeout: repeating a successful request can charge again.
+- Transcribe audio: `POST /api/v1/audio/transcribe` (`audio`, optional independent `diarize` / `srt`; SRT does not require speaker labels)
+- Align known text: `POST /api/v1/audio/align` (`audio` and `text`)
 - Check remaining credits: `GET /api/v1/billing/credits`
 
 Before destructive requests, resolve the exact resource and confirm that it belongs to the user.
+
+For structured extraction, replace the example URL with media the user can access:
+
+```bash
+python3 scripts/visionstory_api.py understand-media --prompt "Identify the main subject" --inputs '[{"url":"https://example.com/photo.jpg"}]' --schema '{"type":"object","properties":{"subject":{"type":"string"}},"required":["subject"],"additionalProperties":false}'
+```
+
+For AI video, discover `GET /api/v1/ai_video/models` before selecting a model or limits. Seedance and Wan support `480p`; this does not re-enable `480p` for talking-avatar creation. Kling 3.0 supports `4k`; Kling 3.0 Omni does not. Wan supports prompts up to 20000 characters and integer durations of 2–30 seconds; other models have different limits. Use the cost endpoint before generation. Reference inputs and `generate_audio` do not increase the price. Failed tasks refund credits without automatically switching to another model. Read the [AI video guide](https://developers.visionstory.ai/guides/ai-video.md) for model-specific input combinations.
 
 ## Response handling
 
 - Call `raise_for_status()` or equivalent before reading a response body.
 - Read successful payloads from the top-level `data` field.
+- `POST /api/v1/tts` is the exception: its body is MP3 audio and usage metadata is returned in response headers.
 - Error responses include an `error.hint` field with a one-line suggested next action (for example, a top-up URL
   when credits are insufficient). Follow the hint before retrying blindly.
 - Beta endpoints (the AI Video family) enforce a small per-key concurrency cap in addition to the global rate

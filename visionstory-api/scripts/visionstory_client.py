@@ -20,7 +20,7 @@ import os
 import time
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -30,6 +30,8 @@ API_KEY_ENV = "VISIONSTORY_API_KEY"
 BASE_URL_ENV = "VISIONSTORY_API_BASE"
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 MAX_AUDIO_BYTES = 30 * 1024 * 1024
+MAX_BINARY_RESPONSE_BYTES = 30 * 1024 * 1024
+VideoResolution = Literal["720p", "1080p", "2k"]
 IMAGE_MIME_TYPES = {
     ".jpeg": "image/jpeg",
     ".jpg": "image/jpeg",
@@ -143,7 +145,7 @@ def build_video_payload(
     speech_rate: str = "normal",
     model_id: str = "vs_character_v4",
     aspect_ratio: str = "9:16",
-    resolution: str = "720p",
+    resolution: VideoResolution = "720p",
     emotion: str = "cheerful",
     background_color: str = "",
     voice_change: bool = False,
@@ -189,6 +191,30 @@ def build_video_payload(
     return payload
 
 
+TRANSCRIBE_AUDIO_MIME_TYPES = {".wav": "audio/wav", ".mp3": "audio/mp3"}
+TRANSCRIBE_MAX_AUDIO_BYTES = 15 * 1024 * 1024
+
+
+def _audio_media(audio_url, audio_file, asset_id) -> dict[str, Any]:
+    """Convert exactly one URL, local file, or asset ID into a MediaRef."""
+    provided = [value for value in (audio_url, audio_file, asset_id) if value is not None]
+    if len(provided) != 1:
+        raise ValueError("Provide exactly one of: audio_url, audio_file, asset_id")
+    if audio_file is not None:
+        mime_type = TRANSCRIBE_AUDIO_MIME_TYPES.get(audio_file.suffix.lower())
+        if mime_type is None:
+            raise ValueError("Unsupported audio file extension. Supported: .mp3, .wav")
+        if audio_file.stat().st_size > TRANSCRIBE_MAX_AUDIO_BYTES:
+            raise ValueError("Audio file exceeds the 15MB limit")
+        return {"inline_data": {
+            "mime_type": mime_type,
+            "data": base64.b64encode(audio_file.read_bytes()).decode("ascii"),
+        }}
+    if audio_url is not None:
+        return {"url": audio_url}
+    return {"asset_id": str(asset_id)}
+
+
 class VisionStoryClient:
     def __init__(self, api_key: str, base_url: str = DEFAULT_BASE_URL, request_timeout: int = 60):
         self.api_key = api_key
@@ -203,7 +229,7 @@ class VisionStoryClient:
         if not api_key:
             raise VisionStoryAPIError(
                 f"{API_KEY_ENV} is not set. Ask the user to create an API key at "
-                "https://app.visionstory.ai and export it as an environment variable."
+                "https://developers.visionstory.ai/api-keys and export it as an environment variable."
             )
         base_url = os.getenv(BASE_URL_ENV, DEFAULT_BASE_URL)
         return cls(api_key, base_url, request_timeout)
@@ -256,6 +282,69 @@ class VisionStoryClient:
             return response_data["data"]
         return response_data
 
+    def request_binary(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict[str, Any] | None = None,
+        timeout: int | None = None,
+    ) -> dict[str, Any]:
+        """Make an authenticated request whose successful response is binary."""
+        url = f"{self.base_url}{path}"
+        body = json.dumps(payload).encode("utf-8") if payload is not None else None
+        headers = {"Accept": "audio/*", "X-API-Key": self.api_key}
+        if payload is not None:
+            headers["Content-Type"] = "application/json"
+
+        request = Request(url, data=body, headers=headers, method=method)
+        try:
+            with urlopen(request, timeout=timeout or self.request_timeout) as response:
+                declared_size = response.headers.get("Content-Length")
+                if declared_size and int(declared_size) > MAX_BINARY_RESPONSE_BYTES:
+                    raise VisionStoryAPIError(
+                        f"{method} {path} returned more than the "
+                        f"{MAX_BINARY_RESPONSE_BYTES // 1024 // 1024}MB client limit"
+                    )
+                response_body = response.read(MAX_BINARY_RESPONSE_BYTES + 1)
+                if len(response_body) > MAX_BINARY_RESPONSE_BYTES:
+                    raise VisionStoryAPIError(
+                        f"{method} {path} returned more than the "
+                        f"{MAX_BINARY_RESPONSE_BYTES // 1024 // 1024}MB client limit"
+                    )
+                response_headers = response.headers
+        except HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="replace")
+            raise VisionStoryAPIError(
+                f"{method} {path} failed with HTTP {exc.code}: {error_body[:2000]}"
+            ) from exc
+        except URLError as exc:
+            raise VisionStoryAPIError(f"{method} {path} failed: {exc.reason}") from exc
+
+        content_type = response_headers.get_content_type()
+        if not content_type.startswith("audio/"):
+            raise VisionStoryAPIError(
+                f"{method} {path} returned unexpected Content-Type {content_type!r}"
+            )
+
+        def _number(name: str, converter: type[int] | type[float]) -> int | float | None:
+            raw = response_headers.get(name)
+            if raw is None:
+                return None
+            try:
+                return converter(raw)
+            except ValueError:
+                return None
+
+        return {
+            "audio": response_body,
+            "mime_type": content_type,
+            "audio_id": response_headers.get("X-Audio-Id"),
+            "duration_sec": _number("X-Audio-Duration-Sec", float),
+            "usage_characters": _number("X-Usage-Characters", int),
+            "cost_credit": _number("X-Cost-Credit", int),
+        }
+
     # ---- resource helpers (thin 1:1 wrappers over REST) ------------------
 
     def list_models(self) -> Any:
@@ -264,8 +353,20 @@ class VisionStoryClient:
     def list_avatars(self) -> Any:
         return self.request("GET", "/api/v1/avatars")
 
-    def list_voices(self) -> Any:
-        return self.request("GET", "/api/v1/voices")
+    def list_voices(self, *, cursor: int | None = None, limit: int | None = None,
+                    locale: str | None = None, provider: str | None = None) -> Any:
+        """List voices, optionally filtered by BCP 47 locale and provider."""
+        params = {
+            key: value
+            for key, value in {
+                "cursor": cursor,
+                "limit": limit,
+                "locale": locale,
+                "provider": provider,
+            }.items()
+            if value is not None
+        }
+        return self.request("GET", "/api/v1/voices", params=params or None)
 
     def list_videos(self) -> Any:
         return self.request("GET", "/api/v1/videos")
@@ -326,6 +427,35 @@ class VisionStoryClient:
         )
         return self.request("POST", "/api/v1/asset", payload=payload, timeout=timeout)
 
+    def transcribe_audio(
+        self,
+        *,
+        audio_url: str | None = None,
+        audio_file: Path | None = None,
+        asset_id: str | None = None,
+        diarize: bool = False,
+        srt: bool = False,
+    ) -> Any:
+        """Transcribe audio with word timestamps and optional speakers or SRT."""
+        payload: dict[str, Any] = {"audio": _audio_media(audio_url, audio_file, asset_id)}
+        if diarize:
+            payload["diarize"] = True
+        if srt:
+            payload["srt"] = True
+        return self.request("POST", "/api/v1/audio/transcribe", payload=payload, timeout=300)
+
+    def align_audio(
+        self,
+        *,
+        text: str,
+        audio_url: str | None = None,
+        audio_file: Path | None = None,
+        asset_id: str | None = None,
+    ) -> Any:
+        """Align known text with spoken audio and return word timestamps."""
+        payload = {"audio": _audio_media(audio_url, audio_file, asset_id), "text": text}
+        return self.request("POST", "/api/v1/audio/align", payload=payload, timeout=300)
+
     def create_video(self, payload: dict[str, Any]) -> Any:
         return self.request("POST", "/api/v1/video", payload=payload)
 
@@ -359,9 +489,39 @@ class VisionStoryClient:
 
     # ---- text to speech --------------------------------------------------
 
-    def create_speech(self, *, text: str, voice_id: str) -> Any:
-        """POST /api/v1/tts: synthesize speech from text (beta)."""
-        return self.request("POST", "/api/v1/tts", payload={"text": text, "voice_id": voice_id})
+    def create_speech(self, *, text: str, voice_id: str, locale: str | None = None,
+                      speech_rate: Literal["slow", "normal", "fast"] | None = None) -> Any:
+        """Synthesize MP3 speech. Optional locale and pace; omitted pace defaults to normal."""
+        payload = {"text": text, "voice_id": voice_id}
+        if locale:
+            payload["locale"] = locale
+        if speech_rate is not None:
+            if speech_rate not in ("slow", "normal", "fast"):
+                raise ValueError("speech_rate must be slow, normal, or fast")
+            payload["speech_rate"] = speech_rate
+        return self.request_binary("POST", "/api/v1/tts", payload=payload)
+
+    def understand_media(self, *, prompt: str, inputs: list[dict[str, Any]],
+                         schema: dict[str, Any]) -> Any:
+        """Extract structured JSON from 1–8 media references, billed only on success.
+
+        Each input is exactly one asset_id, public url, or inline_data. The JSON
+        Schema must describe an object. This synchronous request may take 180s.
+        """
+        if not isinstance(prompt, str) or not 1 <= len(prompt) <= 5000:
+            raise ValueError("prompt must contain 1–5000 characters")
+        if not isinstance(inputs, list) or not 1 <= len(inputs) <= 8:
+            raise ValueError("inputs must contain 1–8 media references")
+        for item in inputs:
+            if (not isinstance(item, dict) or not set(item) <= {"asset_id", "url", "inline_data"}
+                    or sum(value is not None for value in item.values()) != 1):
+                raise ValueError("Each input must provide exactly one of asset_id, url, inline_data")
+            if not next(value for value in item.values() if value is not None):
+                raise ValueError("Media references cannot be empty")
+        if not isinstance(schema, dict) or schema.get("type") != "object":
+            raise ValueError("schema must be a JSON Schema with top-level type object")
+        return self.request("POST", "/api/v1/media/understand",
+                            payload={"prompt": prompt, "inputs": inputs, "schema": schema}, timeout=180)
 
     # ---- image generation ------------------------------------------------
 

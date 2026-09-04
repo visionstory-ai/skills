@@ -54,7 +54,7 @@ build_video_payload = _client.build_video_payload
 # ===== BEGIN generated from the VisionStory OpenAPI spec — do not edit by hand =====
 # These enum values and the client_request_id pattern are generated from the
 # VisionStory API's published OpenAPI spec, so this CLI never drifts from the API.
-RESOLUTIONS = ('480p', '720p', '1080p', '2k')
+RESOLUTIONS = ('720p', '1080p', '2k')
 ASPECT_RATIOS = ('9:16', '16:9', '1:1')
 EMOTIONS = ('cheerful', 'angry', 'marketing', 'news', 'singing')
 SPEECH_RATES = ('slow', 'normal', 'fast')
@@ -80,8 +80,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--request-timeout", type=int, default=60)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for command in ("models", "avatars", "voices", "videos", "credits"):
+    for command in ("models", "avatars", "videos", "credits"):
         add_list_command(subparsers, command)
+
+    voices = subparsers.add_parser("voices", help="List and filter public or cloned voices")
+    voices.add_argument("--cursor", type=int)
+    voices.add_argument("--limit", type=int, choices=range(1, 501), metavar="1-500")
+    voices.add_argument("--locale", help="BCP 47 locale such as en, en-GB, zh-TW, or zh-HK")
+    voices.add_argument("--provider", help="Voice provider, matched case-insensitively")
 
     create_avatar = subparsers.add_parser("create-avatar")
     avatar_source = create_avatar.add_mutually_exclusive_group(required=True)
@@ -123,6 +129,34 @@ def build_parser() -> argparse.ArgumentParser:
     download = subparsers.add_parser("download")
     download.add_argument("--url", required=True)
     download.add_argument("--output", required=True, type=Path)
+
+    tts = subparsers.add_parser("tts", help="Synthesize speech and save the MP3")
+    tts.add_argument("--text", required=True)
+    tts.add_argument("--voice-id", required=True)
+    tts.add_argument("--locale", help="Optional BCP 47 pronunciation locale")
+    tts.add_argument("--speech-rate", choices=SPEECH_RATES)
+    tts.add_argument("--output", required=True, type=Path)
+
+    understand = subparsers.add_parser("understand-media", help="Extract structured JSON from media")
+    understand.add_argument("--prompt", required=True)
+    understand.add_argument("--inputs", required=True, type=json.loads)
+    understand.add_argument("--schema", required=True, type=json.loads)
+
+    transcribe = subparsers.add_parser("transcribe", help="Transcribe audio with word timestamps")
+    transcribe_source = transcribe.add_mutually_exclusive_group(required=True)
+    transcribe_source.add_argument("--audio-file", type=Path)
+    transcribe_source.add_argument("--audio-url")
+    transcribe_source.add_argument("--asset-id")
+    transcribe.add_argument("--diarize", action="store_true")
+    transcribe.add_argument("--srt", action="store_true")
+    transcribe.add_argument("--output", type=Path)
+
+    align = subparsers.add_parser("align", help="Align exact text with spoken audio")
+    align.add_argument("--text", required=True)
+    align_source = align.add_mutually_exclusive_group(required=True)
+    align_source.add_argument("--audio-file", type=Path)
+    align_source.add_argument("--audio-url")
+    align_source.add_argument("--asset-id")
 
     return parser
 
@@ -167,18 +201,60 @@ def run_command(args) -> Any:
     get_paths = {
         "models": "/api/v1/models",
         "avatars": "/api/v1/avatars",
-        "voices": "/api/v1/voices",
         "videos": "/api/v1/videos",
         "credits": "/api/v1/billing/credits",
     }
     if args.command in get_paths:
         return client.request("GET", get_paths[args.command])
 
+    if args.command == "voices":
+        return client.list_voices(
+            cursor=args.cursor,
+            limit=args.limit,
+            locale=args.locale,
+            provider=args.provider,
+        )
+
     if args.command == "create-avatar":
         return client.create_avatar(image_url=args.image_url, image_file=args.image)
 
     if args.command == "status":
         return client.get_video(args.video_id)
+
+    if args.command == "tts":
+        options = {"speech_rate": args.speech_rate} if args.speech_rate is not None else {}
+        speech = client.create_speech(text=args.text, voice_id=args.voice_id, locale=args.locale, **options)
+        audio = speech.pop("audio")
+        args.output.write_bytes(audio)
+        speech["output"] = str(args.output)
+        return speech
+
+    if args.command == "understand-media":
+        return client.understand_media(prompt=args.prompt, inputs=args.inputs, schema=args.schema)
+
+    if args.command == "transcribe":
+        result = client.transcribe_audio(
+            audio_url=args.audio_url,
+            audio_file=args.audio_file,
+            asset_id=args.asset_id,
+            diarize=args.diarize,
+            srt=args.srt,
+        )
+        if args.output:
+            if args.srt and result.get("srt"):
+                args.output.write_text(result["srt"], encoding="utf-8")
+            else:
+                args.output.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+            result["output"] = str(args.output)
+        return result
+
+    if args.command == "align":
+        return client.align_audio(
+            text=args.text,
+            audio_url=args.audio_url,
+            audio_file=args.audio_file,
+            asset_id=args.asset_id,
+        )
 
     if args.command == "create-video":
         if args.no_wait and args.output is not None:
