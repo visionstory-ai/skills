@@ -32,7 +32,7 @@ local to the CLI and must not be presented as configuring those other channels.
 
 When the `visionstory` CLI is available and authentication was configured with `visionstory login`, prefer CLI commands
 so the saved credential is used. Inspect available commands with `visionstory --help`, and discover current resources
-with `visionstory models`, `visionstory avatars`, `visionstory voices`, and `visionstory credits` before generation.
+with `visionstory models`, `visionstory avatars --is-public`, `visionstory voices`, and `visionstory credits` before generation.
 
 Otherwise, use `scripts/visionstory_api.py` when it is present. It has no third-party Python dependencies and provides consistent
 authentication, base64 encoding, polling, timeouts, error handling, and downloads. The script imports the shared
@@ -48,7 +48,7 @@ Discover resources:
 
 ```bash
 python3 scripts/visionstory_api.py models
-python3 scripts/visionstory_api.py avatars
+python3 scripts/visionstory_api.py avatars --is-public
 python3 scripts/visionstory_api.py voices --locale en-GB --limit 20
 python3 scripts/visionstory_api.py credits
 ```
@@ -57,6 +57,19 @@ Create an avatar from a local image:
 
 ```bash
 python3 scripts/visionstory_api.py create-avatar --image /path/to/avatar.jpg
+```
+
+`avatars` lists owned avatars by default and the public library only with `--is-public`. Both forms return `avatars` plus `next_cursor`; pass that value to `--cursor` and use `--limit` from 1 to 100. Public avatars cannot be modified.
+
+Adjust one saved framing entry for an owned avatar only after reading its current values:
+
+```bash
+python3 scripts/visionstory_api.py update-avatar-framing \
+  --avatar-id AVATAR_ID \
+  --aspect-ratio 9:16 \
+  --zoom 1.2 \
+  --offset-x 0 \
+  --offset-y -0.25
 ```
 
 Create, wait for, and download a video:
@@ -87,7 +100,7 @@ If only `SKILL.md` was installed and the script is unavailable, follow the HTTP 
    - Optional voice, aspect ratio, resolution, emotion, and background color preferences.
 2. Discover current resources instead of guessing IDs:
    - `GET /api/v1/models`
-   - `GET /api/v1/avatars`
+   - `GET /api/v1/avatars?is_public=true`
    - `GET /api/v1/voices`
    Filter voices with a BCP 47 `locale`: `en` matches all English variants, while `en-GB`, `zh-TW`, or `zh-HK` selects one region. Reuse a returned voice's `locale` with `POST /api/v1/tts` when pronunciation should stay regional.
 3. If the user supplied an image rather than an `avatar_id`, create an avatar with `POST /api/v1/avatar`.
@@ -97,7 +110,7 @@ If only `SKILL.md` was installed and the script is unavailable, follow the HTTP 
 
 ## Create a video
 
-Prefer `vs_character_v4` unless the user requests another model. Confirm that the selected model supports the requested resolution by checking `GET /api/v1/models`. Offer only the documented `720p`, `1080p`, or `2k` values. The API keeps legacy raw HTTP requests that send `480p` working by rendering and billing them as `720p`, but `480p` is not a current model capability and must not be suggested for new requests.
+Prefer `vs_character_v4` unless the user requests another model. Confirm that the selected model supports the requested resolution by checking `GET /api/v1/models`. Offer only the documented `720p`, `1080p`, or `2k` values. Talking-avatar requests no longer accept `480p`; historical video responses may still report it.
 
 For a text script:
 
@@ -188,6 +201,8 @@ Use HTTP error handling and a bounded timeout. Videos are retained for 7 days, s
 
 - List recent videos: `GET /api/v1/videos`
 - Delete a video: `DELETE /api/v1/video?video_id=...`
+- List owned avatars: `GET /api/v1/avatars`; add `is_public=true` for the public library and follow `next_cursor` for pagination.
+- Update owned-avatar framing: `POST /api/v1/avatar/framing` with `avatar_id`, `aspect_ratio` (`9:16`, `16:9`, or `1:1`), `zoom` (at least 1), and both offsets (-1 to 1). Send all fields and do not retry a dynamic maximum-zoom error unchanged.
 - Clone a voice: `POST /api/v1/voice`
 - Delete a cloned voice: `DELETE /api/v1/voice?voice_id=...`
 - Create MP3 speech: `POST /api/v1/tts` (`text`, `voice_id`, optional `locale` and `speech_rate`: `slow`, `normal`, or `fast`). Omitted/null rate uses normal speed. Read actual duration from `X-Audio-Duration-Sec`; billing is unchanged. The helper accepts `tts --speech-rate slow`.

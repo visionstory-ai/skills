@@ -80,8 +80,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--request-timeout", type=int, default=60)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    for command in ("models", "avatars", "videos", "credits"):
+    for command in ("models", "videos", "credits"):
         add_list_command(subparsers, command)
+
+    avatars = subparsers.add_parser("avatars", help="List owned avatars or the public avatar library")
+    avatars.add_argument(
+        "--is-public",
+        action="store_true",
+        default=None,
+        help="List the public library instead of avatars owned by this account",
+    )
+    avatars.add_argument("--cursor", type=int, help="Pagination cursor returned as next_cursor")
+    avatars.add_argument("--limit", type=int, choices=range(1, 101), metavar="1-100")
 
     voices = subparsers.add_parser("voices", help="List and filter public or cloned voices")
     voices.add_argument("--cursor", type=int)
@@ -93,6 +103,13 @@ def build_parser() -> argparse.ArgumentParser:
     avatar_source = create_avatar.add_mutually_exclusive_group(required=True)
     avatar_source.add_argument("--image", type=Path)
     avatar_source.add_argument("--image-url")
+
+    framing = subparsers.add_parser("update-avatar-framing")
+    framing.add_argument("--avatar-id", required=True)
+    framing.add_argument("--aspect-ratio", required=True, choices=ASPECT_RATIOS)
+    framing.add_argument("--zoom", required=True, type=float)
+    framing.add_argument("--offset-x", required=True, type=float)
+    framing.add_argument("--offset-y", required=True, type=float)
 
     create_video = subparsers.add_parser("create-video")
     create_video.add_argument("--avatar-id", required=True)
@@ -200,7 +217,6 @@ def run_command(args) -> Any:
     client = VisionStoryClient(api_key, args.base_url, args.request_timeout)
     get_paths = {
         "models": "/api/v1/models",
-        "avatars": "/api/v1/avatars",
         "videos": "/api/v1/videos",
         "credits": "/api/v1/billing/credits",
     }
@@ -215,8 +231,24 @@ def run_command(args) -> Any:
             provider=args.provider,
         )
 
+    if args.command == "avatars":
+        return client.list_avatars(
+            is_public=args.is_public,
+            cursor=args.cursor,
+            limit=args.limit,
+        )
+
     if args.command == "create-avatar":
         return client.create_avatar(image_url=args.image_url, image_file=args.image)
+
+    if args.command == "update-avatar-framing":
+        return client.update_avatar_framing(
+            avatar_id=args.avatar_id,
+            aspect_ratio=args.aspect_ratio,
+            zoom=args.zoom,
+            offset_x=args.offset_x,
+            offset_y=args.offset_y,
+        )
 
     if args.command == "status":
         return client.get_video(args.video_id)

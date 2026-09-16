@@ -350,8 +350,28 @@ class VisionStoryClient:
     def list_models(self) -> Any:
         return self.request("GET", "/api/v1/models")
 
-    def list_avatars(self) -> Any:
-        return self.request("GET", "/api/v1/avatars")
+    def list_avatars(
+        self,
+        *,
+        is_public: bool | None = None,
+        cursor: int | None = None,
+        limit: int | None = None,
+    ) -> Any:
+        """List either owned avatars (default) or the public library."""
+        if cursor is not None and cursor < 0:
+            raise ValueError("cursor must be at least 0")
+        if limit is not None and not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        params = {
+            key: value
+            for key, value in {
+                "is_public": is_public,
+                "cursor": cursor,
+                "limit": limit,
+            }.items()
+            if value is not None
+        }
+        return self.request("GET", "/api/v1/avatars", params=params or None)
 
     def list_voices(self, *, cursor: int | None = None, limit: int | None = None,
                     locale: str | None = None, provider: str | None = None) -> Any:
@@ -383,6 +403,34 @@ class VisionStoryClient:
             else {"img_url": image_url}
         )
         return self.request("POST", "/api/v1/avatar", payload=payload)
+
+    def update_avatar_framing(
+        self,
+        *,
+        avatar_id: str,
+        aspect_ratio: str,
+        zoom: float,
+        offset_x: float,
+        offset_y: float,
+    ) -> Any:
+        """Change one aspect ratio's framing for an owned avatar."""
+        if aspect_ratio not in {"9:16", "16:9", "1:1"}:
+            raise ValueError("aspect_ratio must be one of: 9:16, 16:9, 1:1")
+        if zoom < 1:
+            raise ValueError("zoom must be at least 1")
+        if not -1 <= offset_x <= 1 or not -1 <= offset_y <= 1:
+            raise ValueError("offset_x and offset_y must be between -1 and 1")
+        return self.request(
+            "POST",
+            "/api/v1/avatar/framing",
+            payload={
+                "avatar_id": avatar_id,
+                "aspect_ratio": aspect_ratio,
+                "zoom": zoom,
+                "offset_x": offset_x,
+                "offset_y": offset_y,
+            },
+        )
 
     def clone_voice(
         self,
