@@ -1,6 +1,6 @@
 ---
 name: visionstory-api
-description: Create and manage talking-avatar videos, voices, speech, audio transcripts, and structured media extraction through the VisionStory OpenAPI. Use for avatar video generation, voice discovery or cloning, text-to-speech, transcription, alignment, media understanding, task status, downloads, and related VisionStory API resources.
+description: Create and manage talking-avatar videos, AI images, voices, speech, audio transcripts, and structured media extraction through the VisionStory OpenAPI. Use for avatar video generation, Seedream or Nano Banana image generation and editing, voice discovery or cloning, text-to-speech, transcription, alignment, media understanding, task status, downloads, and related VisionStory API resources.
 ---
 
 # VisionStory API
@@ -34,9 +34,10 @@ When the `visionstory` CLI is available and authentication was configured with `
 so the saved credential is used. Inspect available commands with `visionstory --help`, and discover current resources
 with `visionstory models`, `visionstory avatars --is-public`, `visionstory voices`, and `visionstory credits` before generation.
 
-Otherwise, use `scripts/visionstory_api.py` when it is present. It has no third-party Python dependencies and provides consistent
+Otherwise, use `scripts/visionstory_api.py` when it is present for the operations it exposes. It has no third-party Python dependencies and provides consistent
 authentication, base64 encoding, polling, timeouts, error handling, and downloads. The script imports the shared
 client layer from `scripts/visionstory_client.py`, which ships in the same package; keep the two files together.
+Use the REST API directly for image generation or another operation that is not exposed by the helper.
 
 Inspect its commands:
 
@@ -209,6 +210,8 @@ Use HTTP error handling and a bounded timeout. Videos are retained for 7 days, s
 - Extract structured media data: `POST /api/v1/media/understand` with required `prompt` (1–5000 characters), `inputs` (1–8 MediaRef objects), and an object-root JSON `schema`. Each input uses exactly one `url`, `asset_id`, or `inline_data`. This synchronous operation can take 180 seconds. It returns `data.output`, `data.usage` (input/output token counts), and `data.cost_credit`. Successful calls are billed from token usage, rounded up to at least 1 credit; moderation refusal is `37100`. There is no public model selector or free-text mode. Do not blindly retry a timeout: repeating a successful request can charge again.
 - Transcribe audio: `POST /api/v1/audio/transcribe` (`audio`, optional independent `diarize` / `srt`; SRT does not require speaker labels)
 - Align known text: `POST /api/v1/audio/align` (`audio` and `text`)
+- Discover image-generation capabilities: `GET /api/v1/image/models`. Current public IDs are `nano-banana-2`, `nano-banana-pro`, `seedream-5.0-lite`, and `seedream-5.0-pro`. Read `params.prompt.max_length`, `params.resolution.values/default`, `params.refs.max`, and `credit_per_image` instead of hardcoding them. Lite supports `2K`/`4K` with `2K` default and up to 14 references; Pro supports `1K`/`2K` with `1K` default and up to 10 references; Nano Banana models support `1K`/`2K` with `1K` default and up to 4 references.
+- Generate or edit an image: `POST /api/v1/image` with a returned `model_id`, `prompt`, and optional model-supported `aspect_ratio`, `resolution`, and `refs`. Each reference uses exactly one `asset_id`, `url`, or `inline_data`. Unsupported resolution returns HTTP 400; too many references returns HTTP 422. Moderation refusal is HTTP 403/code `37100`; other upstream failures are HTTP 403/code `1`; failures occur before billing.
 - Check remaining credits: `GET /api/v1/billing/credits`
 
 Before destructive requests, resolve the exact resource and confirm that it belongs to the user.
