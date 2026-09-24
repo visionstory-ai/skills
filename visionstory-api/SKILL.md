@@ -233,6 +233,8 @@ For AI video, discover `GET /api/v1/ai_video/models` before selecting a model or
 - Error responses include an `error.hint` field with a one-line suggested next action (for example, a top-up URL
   when credits are insufficient). Follow the hint before retrying blindly.
 - Beta endpoints (the AI Video family) enforce a small per-key concurrency cap in addition to the global rate
-  limit; HTTP 429 with a concurrency hint means wait for in-flight tasks to finish, then retry.
+  limit. Query `GET /api/v1/ai_videos?status=queued,creating` (or `visionstory ai-videos --status queued,creating`) and follow all `next_cursor` pages to inspect in-flight tasks. The list does not reserve slots or report the configured limit. A concurrency HTTP 429 includes `error.details.limit` and `error.details.in_flight`; wait for a task to finish and retry using the same `client_request_id`. The optional status filter also accepts `created` and `failed`, comma-separated; omit it for all tasks. Unknown statuses return HTTP 400.
+  Seedance prompts allow up to 5000 characters, Kling 2500, and Wan 20000; discover current limits before submitting. Keep Seedance shot prompts concise (preferably at most 500 Chinese characters or 1000 English words); the validation ceiling is not a recommended length.
 - Preserve server error details when reporting a failed request, but redact credentials and base64 file content.
+  The shared error schema still declares nullable string details; concurrency documentation uses an object. Accept either representation when reading concurrency metadata, and tolerate absent fields on other 429 responses.
 - Avoid polling faster than every 5 seconds.

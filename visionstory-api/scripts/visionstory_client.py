@@ -604,12 +604,14 @@ class VisionStoryClient:
         params = {"video_id": video_id} if video_id is not None else {"video_ids": video_ids}
         return self.request("GET", "/api/v1/ai_video", params=params)
 
-    def list_ai_videos(self, *, cursor: str | None = None, limit: int | None = None) -> Any:
+    def list_ai_videos(self, *, cursor: str | None = None, limit: int | None = None, status: str | None = None) -> Any:
         params: dict[str, Any] = {}
         if cursor is not None:
             params["cursor"] = cursor
         if limit is not None:
             params["limit"] = limit
+        if status is not None:
+            params["status"] = status
         return self.request("GET", "/api/v1/ai_videos", params=params or None)
 
     def delete_ai_video(self, video_id: str) -> Any:
