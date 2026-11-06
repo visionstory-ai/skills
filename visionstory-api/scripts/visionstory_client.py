@@ -150,6 +150,7 @@ def build_video_payload(
     background_color: str = "",
     voice_change: bool = False,
     denoise: bool = False,
+    prompt: str | None = None,
 ) -> dict[str, Any]:
     """Build a POST /api/v1/video payload from plain arguments.
 
@@ -166,6 +167,10 @@ def build_video_payload(
         "resolution": resolution,
         "emotion": emotion,
     }
+    if prompt is not None:
+        if not isinstance(prompt, str) or len(prompt) > 2000:
+            raise ValueError("prompt must be a string of at most 2000 characters")
+        payload["prompt"] = prompt
     if background_color:
         payload["background_color"] = background_color
 
@@ -578,20 +583,22 @@ class VisionStoryClient:
 
     def create_image(self, payload: dict[str, Any]) -> Any:
         """POST /api/v1/image: text-to-image (beta). payload needs at least model_id + prompt."""
-        return self.request("POST", "/api/v1/image", payload=payload)
+        return self.request("POST", "/api/v1/image", payload=payload, timeout=max(240, self.request_timeout))
 
     # ---- AI video (Seedance) ---------------------------------------------
 
     def list_ai_video_models(self) -> Any:
         return self.request("GET", "/api/v1/ai_video/models")
 
-    def ai_video_cost(self, *, model_id: str, duration_sec: int,
-                      resolution: str | None = None, generate_audio: bool | None = None) -> Any:
+    def ai_video_cost(self, *, model_id: str, duration_sec: float,
+                      resolution: str | None = None, generate_audio: bool | None = None,
+                      reference_video_duration_sec: float = 0) -> Any:
         params: dict[str, Any] = {"model_id": model_id, "duration_sec": duration_sec}
         if resolution is not None:
             params["resolution"] = resolution
         if generate_audio is not None:
             params["generate_audio"] = generate_audio
+        params["reference_video_duration_sec"] = reference_video_duration_sec
         return self.request("GET", "/api/v1/ai_video/cost", params=params)
 
     def create_ai_video(self, payload: dict[str, Any]) -> Any:

@@ -127,6 +127,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=EMOTIONS,
         default="cheerful",
     )
+    create_video.add_argument("--prompt", help="Optional motion instructions for vs_character_v4 (up to 2000 characters)")
     create_video.add_argument("--background-color", default="")
     create_video.add_argument("--voice-change", action="store_true")
     create_video.add_argument("--denoise", action="store_true")
@@ -193,6 +194,7 @@ def create_video_payload(args) -> dict[str, Any]:
         background_color=args.background_color,
         voice_change=args.voice_change,
         denoise=args.denoise,
+        prompt=args.prompt,
     )
     if args.client_request_id:
         if not re.match(CLIENT_REQUEST_ID_PATTERN, args.client_request_id):
