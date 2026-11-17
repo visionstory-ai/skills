@@ -585,7 +585,7 @@ class VisionStoryClient:
         """POST /api/v1/image: text-to-image (beta). payload needs at least model_id + prompt."""
         return self.request("POST", "/api/v1/image", payload=payload, timeout=max(240, self.request_timeout))
 
-    # ---- AI video (Seedance) ---------------------------------------------
+    # ---- AI video (Seedance, Wan, Kling, V-Character) ---------------------------------------------
 
     def list_ai_video_models(self) -> Any:
         return self.request("GET", "/api/v1/ai_video/models")
@@ -593,6 +593,12 @@ class VisionStoryClient:
     def ai_video_cost(self, *, model_id: str, duration_sec: float,
                       resolution: str | None = None, generate_audio: bool | None = None,
                       reference_video_duration_sec: float = 0) -> Any:
+        """Quote server pricing, including reference video for all Seedance models and Kling 4.0.
+
+        Cap each reference at 15s for Seedance 2.0 series, 30s for 2.5 / Flash
+        and Kling 4.0. Any positive reference duration selects V5 Pro video pricing.
+        Fees are returned unchanged, including fractional rates and integer totals.
+        """
         params: dict[str, Any] = {"model_id": model_id, "duration_sec": duration_sec}
         if resolution is not None:
             params["resolution"] = resolution
